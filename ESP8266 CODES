@@ -1,0 +1,63 @@
+#define BLYNK_TEMPLATE_ID "TMPL3TvU_iSp2"
+#define BLYNK_TEMPLATE_NAME "SMART PLANT"
+#define BLYNK_AUTH_TOKEN "1UAuQImYGec6_TqJK_8s_d9TQwJF2kqt"
+
+#include <ESP8266WiFi.h>
+#include <BlynkSimpleEsp8266.h>
+#include <SoftwareSerial.h>
+
+// WiFi & Blynk
+char auth[] = "1UAuQImYGec6_TqJK_8s_d9TQwJF2kqt";
+char ssid[] = "AG";
+char pass[] = "aaryan1234";
+
+// Buzzer connected to D4 (GPIO2)
+#define BUZZER_PIN D4
+
+// Use D7 and D8 for Software Serial (D7 = GPIO13, D8 = GPIO15)
+#define RX_PIN D7  // ESP receives on D7 → Arduino TX (D11)
+#define TX_PIN D8  // ESP transmits on D8 → Arduino RX (D10)
+SoftwareSerial nodeSerial(RX_PIN, TX_PIN); // RX, TX
+
+// Incoming data
+String inputString = "";
+bool stringComplete = false;
+
+void setup() {
+  Serial.begin(9600);            // For debugging via Serial Monitor
+  nodeSerial.begin(9600);        // Communication with Arduino
+  Blynk.begin(auth, ssid, pass);
+  
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+}
+
+void loop() {
+  Blynk.run();
+
+  // Read from Arduino via Software Serial
+  while (nodeSerial.available()) {
+    char inChar = (char)nodeSerial.read();
+    inputString += inChar;
+    if (inChar == '\n') stringComplete = true;
+  }
+
+  if (stringComplete) {
+    float temp, hum;
+    int soil;
+    sscanf(inputString.c_str(), "TEMP:%f,HUM:%f,SOIL:%d", &temp, &hum, &soil);
+
+    Blynk.virtualWrite(V0, temp);
+    Blynk.virtualWrite(V1, hum);
+    Blynk.virtualWrite(V2, soil);
+
+    inputString = "";
+    stringComplete = false;
+  }
+}
+
+// Trigger buzzer on intruder alert (via virtual pin V3)
+BLYNK_WRITE(V3) {
+  int alert = param.asInt();
+  digitalWrite(BUZZER_PIN, alert == 1 ? HIGH : LOW);
+}
