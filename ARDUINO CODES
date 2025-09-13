@@ -1,1 +1,133 @@
+#include <DHT.h>
+#include <SoftwareSerial.h>
+
+// === Pin Definitions ===
+#define DHTPIN 2
+#define DHTTYPE DHT11
+#define SOIL_PIN A0
+#define RELAY_PIN 7
+#define RED_LED 8
+#define GREEN_LED 9
+
+#define ESP_RX 10  // Arduino RX <- ESP TX (via voltage divider)
+#define ESP_TX 11  // Arduino TX -> ESP RX
+
+#define BUTTON_PIN 4  // Push button to change season
+
+DHT dht(DHTPIN, DHTTYPE);
+SoftwareSerial espSerial(ESP_RX, ESP_TX); // RX, TX
+
+// === Moisture Thresholds ===
+// These will be updated seasonally
+int dryThreshold = 700;
+int wetThreshold = 400;
+
+// === Season Logic ===
+String currentSeason = "SUMMER";
+int seasonIndex = 0;
+String seasons[] = {"SUMMER", "WINTER", "MONSOON"};
+
+// === Button Debounce ===
+bool lastButtonState = HIGH;
+unsigned long lastDebounceTime = 0;
+unsigned long debounceDelay = 50;
+
+void setup() {
+  Serial.begin(9600);
+  espSerial.begin(9600);
+  dht.begin();
+
+  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(RED_LED, OUTPUT);
+  pinMode(GREEN_LED, OUTPUT);
+  pinMode(BUTTON_PIN, INPUT_PULLUP); // internal pull-up resistor
+
+  digitalWrite(RELAY_PIN, LOW);
+  digitalWrite(RED_LED, LOW);
+  digitalWrite(GREEN_LED, LOW);
+
+  Serial.println("Smart Plant Monitor Started");
+  Serial.println("Initial Season: " + currentSeason);
+}
+
+void loop() {
+  delay(2000);
+
+  // === Handle Season Selection via Button ===
+  bool reading = digitalRead(BUTTON_PIN);
+  if (reading != lastButtonState) {
+    lastDebounceTime = millis();
+  }
+
+  if ((millis() - lastDebounceTime) > debounceDelay) {
+    if (reading == LOW && lastButtonState == HIGH) {
+      seasonIndex = (seasonIndex + 1) % 3;
+      currentSeason = seasons[seasonIndex];
+      Serial.println("Season changed to: " + currentSeason);
+    }
+  }
+  lastButtonState = reading;
+
+  // === Adjust thresholds based on season ===
+  if (currentSeason == "SUMMER") {
+    dryThreshold = 700;
+    wetThreshold = 400;
+  } else if (currentSeason == "WINTER") {
+    dryThreshold = 600;
+    wetThreshold = 300;
+  } else if (currentSeason == "MONSOON") {
+    dryThreshold = 800;
+    wetThreshold = 500;
+  }
+
+  // === Read Sensors ===
+  float temp = dht.readTemperature();
+  float hum = dht.readHumidity();
+  int soil = analogRead(SOIL_PIN);  // 0 = wet, 1023 = dry
+
+  if (isnan(temp) || isnan(hum)) {
+    Serial.println("Failed to read from DHT sensor");
+    return;
+  }
+
+  // === Print to Serial Monitor ===
+  Serial.println("===================================");
+  Serial.print("🌱 Current Season: ");
+  Serial.println(currentSeason);
+  Serial.print("🌡️ Temperature: ");
+  Serial.print(temp); Serial.println(" °C");
+  Serial.print("💧 Humidity: ");
+  Serial.print(hum); Serial.println(" %");
+  Serial.print("🌾 Soil Moisture (0 = wet, 1023 = dry): ");
+  Serial.println(soil);
+  Serial.println("===================================");
+
+  // === Send to ESP8266 ===
+  String dataString = "TEMP:" + String(temp) +
+                      ",HUM:" + String(hum) +
+                      ",SOIL:" + String(soil) +
+                      ",SEASON:" + currentSeason;
+  espSerial.println(dataString);
+  Serial.println("Sent to ESP: " + dataString);
+
+  // === Moisture Control Logic ===
+  if (soil > dryThreshold) {
+    // TOO DRY – Turn on pump
+    digitalWrite(RELAY_PIN, HIGH);
+    digitalWrite(RED_LED, HIGH);
+    digitalWrite(GREEN_LED, LOW);
+  } else if (soil < wetThreshold) {
+    // TOO WET – Turn off pump
+    digitalWrite(RELAY_PIN, LOW);
+    digitalWrite(RED_LED, LOW);
+    digitalWrite(GREEN_LED, HIGH);
+  } else {
+    // MODERATE – Keep pump off
+    digitalWrite(RELAY_PIN, LOW);
+    digitalWrite(RED_LED, LOW);
+    digitalWrite(GREEN_LED, LOW);
+  }
+
+  delay(5000); // wait before next reading
+}
 
